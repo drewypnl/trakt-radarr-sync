@@ -1,0 +1,9 @@
+[Unit]
+Description=Sync Trakt My_Watchlist to Radarr
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/trakt-radarr-sync
+ExecStart=/usr/bin/python3 /opt/trakt-radarr-sync/sync_trakt_radarr.py

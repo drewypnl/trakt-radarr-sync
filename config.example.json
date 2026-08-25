@@ -1,0 +1,25 @@
+{
+  "trakt": {
+    "client_id": "YOUR_TRAKT_CLIENT_ID",
+    "client_secret": "YOUR_TRAKT_CLIENT_SECRET",
+    "username": "YOUR_TRAKT_USERNAME",
+    "list_name": "My_Watchlist",
+    "list_slug": "my_watchlist"
+  },
+  "radarr": {
+    "url": "http://127.0.0.1:7878",
+    "api_key": "YOUR_RADARR_API_KEY",
+    "quality_profile": "Drewy Quality",
+    "root_folder": "/mnt/movies"
+  },
+  "sync": {
+    "managed_tag": "trakt-my-watchlist",
+    "search_on_add": true,
+    "monitored": true,
+    "minimum_availability": "announced",
+    "delete_removed_movies": true,
+    "delete_files": true,
+    "add_import_exclusion": false,
+    "trakt_page_size": 250
+  }
+}
