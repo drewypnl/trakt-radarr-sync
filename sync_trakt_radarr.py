@@ -15,7 +15,14 @@ TOKEN_FILE = os.path.join(BASE_DIR, "trakt_tokens.json")
 STATE_FILE = os.path.join(BASE_DIR, "sync_state.json")
 LOCK_FILE = os.path.join(BASE_DIR, "SAFETY_LOCKED")
 REQUEST_TIMEOUT = 60
+TRAKT_RETRY_DELAYS = (5, 15, 30)
+TRAKT_TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
 session = requests.Session()
+
+
+class TransientTraktError(RuntimeError):
+    """A temporary Trakt/API/network failure that must abort safely without locking."""
+
 
 
 def now_iso():
@@ -259,6 +266,54 @@ def acknowledge():
     return 0
 
 
+def trakt_get_with_retry(url, tok, page):
+    """Fetch one Trakt page, retrying temporary failures without engaging the safety lock."""
+    attempts = len(TRAKT_RETRY_DELAYS) + 1
+
+    for attempt in range(1, attempts + 1):
+        try:
+            r = session.get(
+                url,
+                headers=th(tok),
+                params={"page": page, "limit": PAGE_SIZE},
+                timeout=REQUEST_TIMEOUT,
+            )
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            if attempt >= attempts:
+                raise TransientTraktError(
+                    f"Trakt request failed after {attempts} attempts: {exc}"
+                ) from exc
+            delay = TRAKT_RETRY_DELAYS[attempt - 1]
+            print(f"  Temporary Trakt network error on page {page}; retrying in {delay}s ({attempt}/{attempts - 1})...")
+            time.sleep(delay)
+            continue
+
+        if r.status_code == 401:
+            return r
+
+        if r.status_code in TRAKT_TRANSIENT_STATUS_CODES:
+            if attempt >= attempts:
+                raise TransientTraktError(
+                    f"Trakt returned HTTP {r.status_code} after {attempts} attempts on page {page}"
+                )
+
+            if r.status_code == 429:
+                try:
+                    delay = int(r.headers.get("Retry-After", TRAKT_RETRY_DELAYS[attempt - 1]))
+                except (TypeError, ValueError):
+                    delay = TRAKT_RETRY_DELAYS[attempt - 1]
+            else:
+                delay = TRAKT_RETRY_DELAYS[attempt - 1]
+
+            print(f"  Trakt HTTP {r.status_code} on page {page}; retrying in {delay}s ({attempt}/{attempts - 1})...")
+            time.sleep(delay)
+            continue
+
+        return r
+
+    raise TransientTraktError("Unexpected Trakt retry failure")
+
+
 def get_trakt(tok):
     out = []
     page = 1
@@ -266,7 +321,7 @@ def get_trakt(tok):
     expected_pages = None
     print(f"Reading Trakt list: {LIST_NAME}")
     while True:
-        r = session.get(url, headers=th(tok), params={"page": page, "limit": PAGE_SIZE}, timeout=REQUEST_TIMEOUT)
+        r = trakt_get_with_retry(url, tok, page)
         if r.status_code == 401:
             t = load_tokens()
             tok = refresh(t.get("refresh_token")) if t else None
@@ -417,6 +472,13 @@ def main():
 
     except SystemExit:
         raise
+    except TransientTraktError as exc:
+        print("\n" + "!" * 68)
+        print("SYNC ABORTED - NO CHANGES MADE")
+        print(f"Temporary Trakt failure: {exc}")
+        print("No safety lock was created. The next scheduled run may try again normally.")
+        print("!" * 68)
+        return 1
     except Exception as exc:
         if LOCK_ON_ANY_ERROR:
             lock_sync(f"Critical preflight error: {exc}")
